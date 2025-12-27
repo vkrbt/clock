@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Clock</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
+            font-family: 'Georgia', serif;
+        }
+
+        .clock-container {
+            position: relative;
+            width: min(90vw, 90vh, 600px);
+            height: min(90vw, 90vh, 600px);
+            filter: drop-shadow(0 20px 50px rgba(0, 0, 0, 0.5));
+        }
+
+        .clock-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .clock-layer img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .hand {
+            transition: transform 0.1s cubic-bezier(0.4, 2.3, 0.3, 1);
+        }
+
+        .clock-face {
+            z-index: 1;
+        }
+
+        .hour-hand {
+            z-index: 2;
+        }
+
+        .minute-hand {
+            z-index: 3;
+        }
+
+        .second-hand {
+            z-index: 4;
+        }
+
+        .digital-clock {
+            margin-top: 30px;
+            font-family: 'Courier New', monospace;
+            font-size: clamp(1.5rem, 5vw, 3rem);
+            color: #b8956c;
+            text-shadow: 0 0 20px rgba(184, 149, 108, 0.4);
+            letter-spacing: 0.15em;
+            background: linear-gradient(180deg, #b8956c 0%, #8b7355 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .sound-hint {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: rgba(184, 149, 108, 0.5);
+            cursor: pointer;
+            transition: opacity 0.5s;
+        }
+
+        .sound-hint:hover {
+            color: rgba(184, 149, 108, 0.8);
+        }
+
+        .sound-hint.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #confetti-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="confetti-canvas"></canvas>
+    <div class="wrapper">
+    <div class="clock-container">
+        <div class="clock-layer clock-face">
+            <img src="clock.png" alt="Циферблат">
+        </div>
+        <div class="clock-layer hour-hand hand" id="hour">
+            <img src="hour.png" alt="Часовая стрелка">
+        </div>
+        <div class="clock-layer minute-hand hand" id="minute">
+            <img src="minute.png" alt="Минутная стрелка">
+        </div>
+        <div class="clock-layer second-hand hand" id="second">
+            <img src="second.png" alt="Секундная стрелка">
+        </div>
+    </div>
+    <div class="digital-clock" id="digital">00:00:00</div>
+    <div class="sound-hint" id="soundHint">🔔 Кликните для активации звука колокола</div>
+    </div>
+
+    <script>
+        const hourHand = document.getElementById('hour');
+        const minuteHand = document.getElementById('minute');
+        const secondHand = document.getElementById('second');
+        const digitalClock = document.getElementById('digital');
+
+        // Храним накопленные углы, чтобы избежать дёрганья при переходе через 12
+        let prevSecondDeg = null;
+        let prevMinuteDeg = null;
+        let prevHourDeg = null;
+        let secondOffset = 0;
+        let minuteOffset = 0;
+        let hourOffset = 0;
+
+        // Для отслеживания смены секунды (чтобы звук играл один раз)
+        let lastBellSecond = -1;
+
+        // Web Audio API для звука колокола
+        let audioContext = null;
+        let audioReady = false;
+
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    audioReady = true;
+                });
+            } else {
+                audioReady = true;
+            }
+        }
+
+        // Активируем звук при любом взаимодействии
+        function activateAudio() {
+            initAudio();
+            document.getElementById('soundHint').classList.add('hidden');
+        }
+        
+        document.addEventListener('click', activateAudio);
+        document.addEventListener('keydown', activateAudio);
+        document.addEventListener('touchstart', activateAudio);
+        
+        // Пробуем сразу (на случай если браузер разрешает)
+        initAudio();
+
+        function playBell() {
+            if (!audioContext || audioContext.state !== 'running') {
+                // Покажем подсказку если звук не активирован
+                document.getElementById('soundHint').classList.remove('hidden');
+                return;
+            }
+            
+            const now = audioContext.currentTime;
+            const duration = 3.5;
+            
+            // Мастер громкость
+            const masterGain = audioContext.createGain();
+            masterGain.gain.value = 0.35;
+            masterGain.connect(audioContext.destination);
+            
+            // Реверберация через задержки
+            const dryGain = audioContext.createGain();
+            dryGain.gain.value = 0.7;
+            dryGain.connect(masterGain);
+            
+            const wetGain = audioContext.createGain();
+            wetGain.gain.value = 0.3;
+            wetGain.connect(masterGain);
+            
+            // Создаём несколько задержек для эффекта реверберации
+            const delays = [0.1, 0.17, 0.23, 0.31].map(time => {
+                const delay = audioContext.createDelay();
+                delay.delayTime.value = time;
+                const gain = audioContext.createGain();
+                gain.gain.value = 0.15 / (time * 5);
+                delay.connect(gain);
+                gain.connect(wetGain);
+                return delay;
+            });
+            
+            // Характерные частоты церковного колокола (обертоны)
+            // Основная + минорная терция + квинта + октава + и т.д.
+            const partials = [
+                { freq: 220, gain: 1.0, decay: 3.0 },      // Основной тон (hum)
+                { freq: 440, gain: 0.6, decay: 2.5 },      // Прайм
+                { freq: 528, gain: 0.4, decay: 2.0 },      // Минорная терция
+                { freq: 660, gain: 0.5, decay: 1.8 },      // Квинта
+                { freq: 880, gain: 0.35, decay: 1.5 },     // Октава
+                { freq: 1056, gain: 0.2, decay: 1.2 },     // Верхняя терция
+                { freq: 1320, gain: 0.15, decay: 1.0 },    // Верхняя квинта
+                { freq: 1760, gain: 0.1, decay: 0.8 },     // Двойная октава
+                // Лёгкие биения для живости звука
+                { freq: 221.5, gain: 0.3, decay: 3.0 },    // Биение с основным
+                { freq: 441, gain: 0.2, decay: 2.5 },      // Биение с праймом
+            ];
+            
+            partials.forEach(partial => {
+                const osc = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.value = partial.freq;
+                
+                // Небольшой pitch drop при ударе (характерно для колоколов)
+                osc.frequency.setValueAtTime(partial.freq * 1.02, now);
+                osc.frequency.exponentialRampToValueAtTime(partial.freq, now + 0.08);
+                
+                osc.connect(gain);
+                gain.connect(dryGain);
+                
+                // Подключаем к реверберации
+                delays.forEach(delay => gain.connect(delay));
+                
+                // Огибающая: быстрая атака, экспоненциальное затухание
+                gain.gain.setValueAtTime(0, now);
+                gain.gain.linearRampToValueAtTime(partial.gain * 0.5, now + 0.003);
+                gain.gain.linearRampToValueAtTime(partial.gain * 0.35, now + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + partial.decay);
+                
+                osc.start(now);
+                osc.stop(now + duration);
+            });
+            
+            // Добавляем металлический "удар" в начале
+            const noise = audioContext.createBufferSource();
+            const noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * 0.1, audioContext.sampleRate);
+            const noiseData = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < noiseData.length; i++) {
+                noiseData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioContext.sampleRate * 0.01));
+            }
+            noise.buffer = noiseBuffer;
+            
+            const noiseFilter = audioContext.createBiquadFilter();
+            noiseFilter.type = 'bandpass';
+            noiseFilter.frequency.value = 3000;
+            noiseFilter.Q.value = 2;
+            
+            const noiseGain = audioContext.createGain();
+            noiseGain.gain.value = 0.15;
+            
+            noise.connect(noiseFilter);
+            noiseFilter.connect(noiseGain);
+            noiseGain.connect(dryGain);
+            
+            noise.start(now);
+        }
+
+        // ===== КОНФЕТТИ И ХЛОПУШКА =====
+        const confettiCanvas = document.getElementById('confetti-canvas');
+        const confettiCtx = confettiCanvas.getContext('2d');
+        let confettiParticles = [];
+        let confettiAnimating = false;
+
+        function resizeConfettiCanvas() {
+            confettiCanvas.width = window.innerWidth;
+            confettiCanvas.height = window.innerHeight;
+        }
+        resizeConfettiCanvas();
+        window.addEventListener('resize', resizeConfettiCanvas);
+
+        // Цвета конфетти
+        const confettiColors = [
+            '#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff', '#ff6bd6',
+            '#c9b037', '#ad8a56', '#f0e68c', '#ffa500', '#ff4500',
+            '#00ff7f', '#ff1493', '#00bfff', '#ff69b4', '#ffd700'
+        ];
+
+        class ConfettiParticle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 20;
+                this.vy = Math.random() * -18 - 5;
+                this.gravity = 0.4;
+                this.drag = 0.99;
+                this.rotation = Math.random() * 360;
+                this.rotationSpeed = (Math.random() - 0.5) * 15;
+                this.width = Math.random() * 10 + 5;
+                this.height = Math.random() * 6 + 3;
+                this.color = confettiColors[Math.floor(Math.random() * confettiColors.length)];
+                this.opacity = 1;
+                this.wobble = Math.random() * 10;
+                this.wobbleSpeed = Math.random() * 0.1 + 0.05;
+            }
+
+            update() {
+                this.vy += this.gravity;
+                this.vx *= this.drag;
+                this.vy *= this.drag;
+                this.x += this.vx + Math.sin(this.wobble) * 2;
+                this.y += this.vy;
+                this.rotation += this.rotationSpeed;
+                this.wobble += this.wobbleSpeed;
+                
+                if (this.y > confettiCanvas.height + 50) {
+                    this.opacity -= 0.02;
+                }
+            }
+
+            draw() {
+                confettiCtx.save();
+                confettiCtx.translate(this.x, this.y);
+                confettiCtx.rotate(this.rotation * Math.PI / 180);
+                confettiCtx.globalAlpha = this.opacity;
+                confettiCtx.fillStyle = this.color;
+                confettiCtx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+                confettiCtx.restore();
+            }
+        }
+
+        function launchConfetti() {
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            // Создаём 150 частиц
+            for (let i = 0; i < 150; i++) {
+                confettiParticles.push(new ConfettiParticle(centerX, centerY));
+            }
+            
+            if (!confettiAnimating) {
+                confettiAnimating = true;
+                animateConfetti();
+            }
+        }
+
+        function animateConfetti() {
+            confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+            
+            confettiParticles = confettiParticles.filter(p => p.opacity > 0);
+            
+            confettiParticles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+            
+            if (confettiParticles.length > 0) {
+                requestAnimationFrame(animateConfetti);
+            } else {
+                confettiAnimating = false;
+            }
+        }
+
+        // Звук хлопушки
+        function playPopSound() {
+            if (!audioContext || audioContext.state !== 'running') return;
+            
+            const now = audioContext.currentTime;
+            
+            // Белый шум для хлопка
+            const bufferSize = audioContext.sampleRate * 0.3;
+            const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const noiseData = noiseBuffer.getChannelData(0);
+            
+            for (let i = 0; i < bufferSize; i++) {
+                // Экспоненциально затухающий шум
+                noiseData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioContext.sampleRate * 0.03));
+            }
+            
+            const noise = audioContext.createBufferSource();
+            noise.buffer = noiseBuffer;
+            
+            // Фильтр для более мягкого звука
+            const filter = audioContext.createBiquadFilter();
+            filter.type = 'highpass';
+            filter.frequency.value = 500;
+            
+            const filter2 = audioContext.createBiquadFilter();
+            filter2.type = 'lowpass';
+            filter2.frequency.value = 4000;
+            
+            // Громкость
+            const gainNode = audioContext.createGain();
+            gainNode.gain.setValueAtTime(0.6, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+            
+            noise.connect(filter);
+            filter.connect(filter2);
+            filter2.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            noise.start(now);
+            
+            // Добавляем "свист" разлетающегося конфетти
+            const swoosh = audioContext.createOscillator();
+            swoosh.type = 'sine';
+            swoosh.frequency.setValueAtTime(800, now);
+            swoosh.frequency.exponentialRampToValueAtTime(200, now + 0.15);
+            
+            const swooshGain = audioContext.createGain();
+            swooshGain.gain.setValueAtTime(0.1, now);
+            swooshGain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            
+            swoosh.connect(swooshGain);
+            swooshGain.connect(audioContext.destination);
+            
+            swoosh.start(now);
+            swoosh.stop(now + 0.2);
+        }
+
+        function celebrate() {
+            playPopSound();
+            launchConfetti();
+        }
+
+        // Отслеживаем начало новой минуты
+        let lastCelebrateMinute = -1;
+
+        function pad(num) {
+            return num.toString().padStart(2, '0');
+        }
+
+        function updateClock() {
+            const now = new Date();
+            const hours = now.getHours();
+            const minutes = now.getMinutes();
+            const seconds = now.getSeconds();
+            const milliseconds = now.getMilliseconds();
+
+            // Проверяем, нужно ли играть колокол (последние 12 секунд минуты для теста)
+            // seconds >= 48 (48-59 = 12 секунд)
+            if (seconds >= 48 && seconds !== lastBellSecond) {
+                lastBellSecond = seconds;
+                playBell();
+            }
+            // Сбрасываем, когда уходим из зоны колокола
+            if (seconds < 48) {
+                lastBellSecond = -1;
+            }
+
+            // Конфетти при начале новой минуты (секунды = 0)
+            if (seconds === 0 && minutes !== lastCelebrateMinute) {
+                lastCelebrateMinute = minutes;
+                celebrate();
+            }
+
+            // Базовые углы
+            let secondsDeg = (seconds + milliseconds / 1000) * 6;
+            let minutesDeg = minutes * 6 + (seconds + milliseconds / 1000) * 0.1;
+            let hoursDeg = (hours % 12) * 30 + minutes * 0.5 + seconds * (0.5 / 60);
+
+            // Корректируем переход через 360° → 0°
+            if (prevSecondDeg !== null && prevSecondDeg > 300 && secondsDeg < 60) {
+                secondOffset += 360;
+            }
+            if (prevMinuteDeg !== null && prevMinuteDeg > 300 && minutesDeg < 60) {
+                minuteOffset += 360;
+            }
+            if (prevHourDeg !== null && prevHourDeg > 300 && hoursDeg < 60) {
+                hourOffset += 360;
+            }
+
+            prevSecondDeg = secondsDeg;
+            prevMinuteDeg = minutesDeg;
+            prevHourDeg = hoursDeg;
+
+            secondHand.style.transform = `rotate(${secondsDeg + secondOffset}deg)`;
+            minuteHand.style.transform = `rotate(${minutesDeg + minuteOffset}deg)`;
+            hourHand.style.transform = `rotate(${hoursDeg + hourOffset}deg)`;
+
+            // Обновляем цифровые часы
+            digitalClock.textContent = `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+        }
+
+        // Первый запуск без анимации
+        secondHand.style.transition = 'none';
+        minuteHand.style.transition = 'none';
+        hourHand.style.transition = 'none';
+        updateClock();
+
+        // Включаем плавную анимацию после первого кадра
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                secondHand.style.transition = '';
+                minuteHand.style.transition = '';
+                hourHand.style.transition = '';
+            });
+        });
+
+        // Используем requestAnimationFrame для максимальной плавности
+        function tick() {
+            updateClock();
+            requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+    </script>
+</body>
+</html>
+
