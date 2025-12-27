@@ -11,8 +11,12 @@
             box-sizing: border-box;
         }
 
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
         body {
-            min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -22,10 +26,12 @@
 
         .clock-container {
             position: relative;
-            width: min(90vw, 90vh, 600px);
-            height: min(90vw, 90vh, 600px);
+            /* Учитываем высоту цифровых часов (~60px) и отступы */
+            width: min(90vw, calc(100vh - 120px), 600px);
+            height: min(90vw, calc(100vh - 120px), 600px);
             filter: drop-shadow(0 20px 50px rgba(0, 0, 0, 0.5));
             overflow: hidden;
+            flex-shrink: 0;
         }
 
         .clock-layer {
@@ -59,9 +65,9 @@
         }
 
         .digital-clock {
-            margin-top: 30px;
+            margin-top: clamp(10px, 2vh, 30px);
             font-family: 'Courier New', monospace;
-            font-size: clamp(1.5rem, 5vw, 3rem);
+            font-size: clamp(1.2rem, 4vw, 2.5rem);
             color: #b8956c;
             text-shadow: 0 0 20px rgba(184, 149, 108, 0.4);
             letter-spacing: 0.15em;
@@ -69,12 +75,16 @@
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            flex-shrink: 0;
         }
 
         .wrapper {
             display: flex;
             flex-direction: column;
             align-items: center;
+            max-height: 100vh;
+            max-width: 100vw;
+            padding: 20px;
         }
 
         #confetti-canvas {
@@ -85,6 +95,26 @@
             height: 100%;
             pointer-events: none;
             z-index: 1000;
+        }
+
+        .audio-blocked-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: rgba(184, 149, 108, 0.8);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .audio-blocked-hint.visible {
+            opacity: 1;
         }
     </style>
 </head>
@@ -107,6 +137,7 @@
     </div>
     <div class="digital-clock" id="digital">00:00:00</div>
     </div>
+    <div class="audio-blocked-hint" id="audioHint">🔇 Звук заблокирован. Нажмите в любом месте экрана для активации</div>
 
     <script>
         const hourHand = document.getElementById('hour');
@@ -152,7 +183,9 @@
                     chimesAudio.play().then(() => {
                         chimesPlaying = true;
                         console.log(`Куранты запущены с ${startOffset.toFixed(1)}с (страница загружена во время воспроизведения)`);
-                    }).catch(() => {});
+                    }).catch(() => {
+                        document.getElementById('audioHint').classList.add('visible');
+                    });
                 }
             }
         });
@@ -163,6 +196,67 @@
 
         // Принудительная загрузка
         chimesAudio.load();
+
+        // Активация звука при любом взаимодействии (браузеры блокируют autoplay)
+        let audioUnlocked = false;
+        const audioHint = document.getElementById('audioHint');
+        
+        function showAudioHint() {
+            audioHint.classList.add('visible');
+        }
+        
+        function hideAudioHint() {
+            audioHint.classList.remove('visible');
+        }
+        
+        function unlockAudio() {
+            if (audioUnlocked) return;
+            
+            // Пробуем воспроизвести и сразу остановить для разблокировки
+            const unlockPromise = chimesAudio.play();
+            if (unlockPromise) {
+                unlockPromise.then(() => {
+                    // Если сейчас не время курантов - останавливаем
+                    const now = new Date();
+                    const seconds = now.getSeconds();
+                    if (seconds < chimesStartSecond || !chimesReady) {
+                        chimesAudio.pause();
+                        chimesAudio.currentTime = 0;
+                    } else {
+                        // Если время курантов - пусть играет с правильной позиции
+                        const milliseconds = now.getMilliseconds();
+                        const secondsUntilMinuteEnd = 60 - seconds - (milliseconds / 1000);
+                        const startOffset = chimesDuration - secondsUntilMinuteEnd;
+                        if (startOffset >= 0 && startOffset < chimesDuration) {
+                            chimesAudio.currentTime = startOffset;
+                            chimesPlaying = true;
+                        }
+                    }
+                    audioUnlocked = true;
+                    hideAudioHint();
+                }).catch(() => {
+                    showAudioHint();
+                });
+            }
+        }
+        
+        // Слушаем любые взаимодействия
+        ['click', 'touchstart', 'keydown'].forEach(event => {
+            document.addEventListener(event, unlockAudio, { once: false, passive: true });
+        });
+        
+        // Проверяем блокировку при загрузке
+        setTimeout(() => {
+            if (!audioUnlocked) {
+                chimesAudio.play().then(() => {
+                    chimesAudio.pause();
+                    chimesAudio.currentTime = 0;
+                    audioUnlocked = true;
+                }).catch(() => {
+                    showAudioHint();
+                });
+            }
+        }, 500);
 
         // ===== КОНФЕТТИ И ХЛОПУШКА =====
         const confettiCanvas = document.getElementById('confetti-canvas');
@@ -259,84 +353,7 @@
             }
         }
 
-        // Web Audio API для звука хлопушки
-        let audioContext = null;
-
-        function initAudioContext() {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioContext.state === 'suspended') {
-                audioContext.resume();
-            }
-        }
-
-        // Звук хлопушки
-        function playPopSound() {
-            initAudioContext();
-            if (!audioContext) return;
-            
-            // Пробуем возобновить если suspended
-            if (audioContext.state === 'suspended') {
-                audioContext.resume();
-                return;
-            }
-            
-            const now = audioContext.currentTime;
-            
-            // Белый шум для хлопка
-            const bufferSize = audioContext.sampleRate * 0.3;
-            const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-            const noiseData = noiseBuffer.getChannelData(0);
-            
-            for (let i = 0; i < bufferSize; i++) {
-                // Экспоненциально затухающий шум
-                noiseData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioContext.sampleRate * 0.03));
-            }
-            
-            const noise = audioContext.createBufferSource();
-            noise.buffer = noiseBuffer;
-            
-            // Фильтр для более мягкого звука
-            const filter = audioContext.createBiquadFilter();
-            filter.type = 'highpass';
-            filter.frequency.value = 500;
-            
-            const filter2 = audioContext.createBiquadFilter();
-            filter2.type = 'lowpass';
-            filter2.frequency.value = 4000;
-            
-            // Громкость
-            const gainNode = audioContext.createGain();
-            gainNode.gain.setValueAtTime(0.6, now);
-            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-            
-            noise.connect(filter);
-            filter.connect(filter2);
-            filter2.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
-            noise.start(now);
-            
-            // Добавляем "свист" разлетающегося конфетти
-            const swoosh = audioContext.createOscillator();
-            swoosh.type = 'sine';
-            swoosh.frequency.setValueAtTime(800, now);
-            swoosh.frequency.exponentialRampToValueAtTime(200, now + 0.15);
-            
-            const swooshGain = audioContext.createGain();
-            swooshGain.gain.setValueAtTime(0.1, now);
-            swooshGain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
-            
-            swoosh.connect(swooshGain);
-            swooshGain.connect(audioContext.destination);
-            
-            swoosh.start(now);
-            swoosh.stop(now + 0.2);
-        }
-
         function celebrate() {
-            playPopSound();
             launchConfetti();
         }
 
@@ -364,7 +381,10 @@
                     chimesAudio.currentTime = startOffset;
                     chimesAudio.play().then(() => {
                         chimesPlaying = true;
-                    }).catch(() => {});
+                        hideAudioHint();
+                    }).catch(() => {
+                        showAudioHint();
+                    });
                 }
             }
             
