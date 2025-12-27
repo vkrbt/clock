@@ -25,6 +25,7 @@
             width: min(90vw, 90vh, 600px);
             height: min(90vw, 90vh, 600px);
             filter: drop-shadow(0 20px 50px rgba(0, 0, 0, 0.5));
+            overflow: hidden;
         }
 
         .clock-layer {
@@ -39,10 +40,6 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
-        }
-
-        .hand {
-            transition: transform 0.1s cubic-bezier(0.4, 2.3, 0.3, 1);
         }
 
         .clock-face {
@@ -80,23 +77,6 @@
             align-items: center;
         }
 
-        .sound-hint {
-            margin-top: 20px;
-            font-size: 0.9rem;
-            color: rgba(184, 149, 108, 0.5);
-            cursor: pointer;
-            transition: opacity 0.5s;
-        }
-
-        .sound-hint:hover {
-            color: rgba(184, 149, 108, 0.8);
-        }
-
-        .sound-hint.hidden {
-            opacity: 0;
-            pointer-events: none;
-        }
-
         #confetti-canvas {
             position: fixed;
             top: 0;
@@ -126,7 +106,6 @@
         </div>
     </div>
     <div class="digital-clock" id="digital">00:00:00</div>
-    <div class="sound-hint" id="soundHint">🔔 Кликните для активации звука колокола</div>
     </div>
 
     <script>
@@ -143,140 +122,47 @@
         let minuteOffset = 0;
         let hourOffset = 0;
 
-        // Для отслеживания смены секунды (чтобы звук играл один раз)
-        let lastBellSecond = -1;
+        // Предзагрузка звука курантов
+        const chimesAudio = new Audio('clock.mp3');
+        chimesAudio.preload = 'auto';
+        let chimesDuration = 0;
+        let chimesReady = false;
+        let chimesStartSecond = 0; // Секунда, когда нужно начать воспроизведение
+        let chimesPlaying = false; // Флаг, что куранты уже играют в этой минуте
 
-        // Web Audio API для звука колокола
-        let audioContext = null;
-        let audioReady = false;
+        chimesAudio.addEventListener('loadedmetadata', () => {
+            chimesDuration = chimesAudio.duration;
+            // Рассчитываем секунду старта: звук должен закончиться к 0-й секунде следующей минуты
+            chimesStartSecond = Math.ceil(60 - chimesDuration);
+            chimesReady = true;
+            console.log(`Куранты загружены: ${chimesDuration.toFixed(1)}с, старт на ${chimesStartSecond}-й секунде`);
+            
+            // Проверяем, не загрузилась ли страница в момент, когда звук уже должен играть
+            const now = new Date();
+            const seconds = now.getSeconds();
+            const milliseconds = now.getMilliseconds();
+            
+            if (seconds >= chimesStartSecond) {
+                // Рассчитываем, с какой позиции начать воспроизведение
+                const secondsUntilMinuteEnd = 60 - seconds - (milliseconds / 1000);
+                const startOffset = chimesDuration - secondsUntilMinuteEnd;
+                
+                if (startOffset >= 0 && startOffset < chimesDuration) {
+                    chimesAudio.currentTime = startOffset;
+                    chimesAudio.play().then(() => {
+                        chimesPlaying = true;
+                        console.log(`Куранты запущены с ${startOffset.toFixed(1)}с (страница загружена во время воспроизведения)`);
+                    }).catch(() => {});
+                }
+            }
+        });
 
-        function initAudio() {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => {
-                    audioReady = true;
-                });
-            } else {
-                audioReady = true;
-            }
-        }
+        chimesAudio.addEventListener('canplaythrough', () => {
+            chimesReady = true;
+        });
 
-        // Активируем звук при любом взаимодействии
-        function activateAudio() {
-            initAudio();
-            document.getElementById('soundHint').classList.add('hidden');
-        }
-        
-        document.addEventListener('click', activateAudio);
-        document.addEventListener('keydown', activateAudio);
-        document.addEventListener('touchstart', activateAudio);
-        
-        // Пробуем сразу (на случай если браузер разрешает)
-        initAudio();
-
-        function playBell() {
-            if (!audioContext || audioContext.state !== 'running') {
-                // Покажем подсказку если звук не активирован
-                document.getElementById('soundHint').classList.remove('hidden');
-                return;
-            }
-            
-            const now = audioContext.currentTime;
-            const duration = 3.5;
-            
-            // Мастер громкость
-            const masterGain = audioContext.createGain();
-            masterGain.gain.value = 0.35;
-            masterGain.connect(audioContext.destination);
-            
-            // Реверберация через задержки
-            const dryGain = audioContext.createGain();
-            dryGain.gain.value = 0.7;
-            dryGain.connect(masterGain);
-            
-            const wetGain = audioContext.createGain();
-            wetGain.gain.value = 0.3;
-            wetGain.connect(masterGain);
-            
-            // Создаём несколько задержек для эффекта реверберации
-            const delays = [0.1, 0.17, 0.23, 0.31].map(time => {
-                const delay = audioContext.createDelay();
-                delay.delayTime.value = time;
-                const gain = audioContext.createGain();
-                gain.gain.value = 0.15 / (time * 5);
-                delay.connect(gain);
-                gain.connect(wetGain);
-                return delay;
-            });
-            
-            // Характерные частоты церковного колокола (обертоны)
-            // Основная + минорная терция + квинта + октава + и т.д.
-            const partials = [
-                { freq: 220, gain: 1.0, decay: 3.0 },      // Основной тон (hum)
-                { freq: 440, gain: 0.6, decay: 2.5 },      // Прайм
-                { freq: 528, gain: 0.4, decay: 2.0 },      // Минорная терция
-                { freq: 660, gain: 0.5, decay: 1.8 },      // Квинта
-                { freq: 880, gain: 0.35, decay: 1.5 },     // Октава
-                { freq: 1056, gain: 0.2, decay: 1.2 },     // Верхняя терция
-                { freq: 1320, gain: 0.15, decay: 1.0 },    // Верхняя квинта
-                { freq: 1760, gain: 0.1, decay: 0.8 },     // Двойная октава
-                // Лёгкие биения для живости звука
-                { freq: 221.5, gain: 0.3, decay: 3.0 },    // Биение с основным
-                { freq: 441, gain: 0.2, decay: 2.5 },      // Биение с праймом
-            ];
-            
-            partials.forEach(partial => {
-                const osc = audioContext.createOscillator();
-                const gain = audioContext.createGain();
-                
-                osc.type = 'sine';
-                osc.frequency.value = partial.freq;
-                
-                // Небольшой pitch drop при ударе (характерно для колоколов)
-                osc.frequency.setValueAtTime(partial.freq * 1.02, now);
-                osc.frequency.exponentialRampToValueAtTime(partial.freq, now + 0.08);
-                
-                osc.connect(gain);
-                gain.connect(dryGain);
-                
-                // Подключаем к реверберации
-                delays.forEach(delay => gain.connect(delay));
-                
-                // Огибающая: быстрая атака, экспоненциальное затухание
-                gain.gain.setValueAtTime(0, now);
-                gain.gain.linearRampToValueAtTime(partial.gain * 0.5, now + 0.003);
-                gain.gain.linearRampToValueAtTime(partial.gain * 0.35, now + 0.02);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + partial.decay);
-                
-                osc.start(now);
-                osc.stop(now + duration);
-            });
-            
-            // Добавляем металлический "удар" в начале
-            const noise = audioContext.createBufferSource();
-            const noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * 0.1, audioContext.sampleRate);
-            const noiseData = noiseBuffer.getChannelData(0);
-            for (let i = 0; i < noiseData.length; i++) {
-                noiseData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioContext.sampleRate * 0.01));
-            }
-            noise.buffer = noiseBuffer;
-            
-            const noiseFilter = audioContext.createBiquadFilter();
-            noiseFilter.type = 'bandpass';
-            noiseFilter.frequency.value = 3000;
-            noiseFilter.Q.value = 2;
-            
-            const noiseGain = audioContext.createGain();
-            noiseGain.gain.value = 0.15;
-            
-            noise.connect(noiseFilter);
-            noiseFilter.connect(noiseGain);
-            noiseGain.connect(dryGain);
-            
-            noise.start(now);
-        }
+        // Принудительная загрузка
+        chimesAudio.load();
 
         // ===== КОНФЕТТИ И ХЛОПУШКА =====
         const confettiCanvas = document.getElementById('confetti-canvas');
@@ -373,9 +259,28 @@
             }
         }
 
+        // Web Audio API для звука хлопушки
+        let audioContext = null;
+
+        function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+        }
+
         // Звук хлопушки
         function playPopSound() {
-            if (!audioContext || audioContext.state !== 'running') return;
+            initAudioContext();
+            if (!audioContext) return;
+            
+            // Пробуем возобновить если suspended
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+                return;
+            }
             
             const now = audioContext.currentTime;
             
@@ -449,15 +354,23 @@
             const seconds = now.getSeconds();
             const milliseconds = now.getMilliseconds();
 
-            // Проверяем, нужно ли играть колокол (последние 12 секунд минуты для теста)
-            // seconds >= 48 (48-59 = 12 секунд)
-            if (seconds >= 48 && seconds !== lastBellSecond) {
-                lastBellSecond = seconds;
-                playBell();
+            // Запускаем куранты так, чтобы они закончились ровно к началу новой минуты
+            if (chimesReady && seconds >= chimesStartSecond && !chimesPlaying) {
+                // Рассчитываем точное время старта для синхронизации
+                const secondsUntilMinuteEnd = 60 - seconds - (milliseconds / 1000);
+                const startOffset = chimesDuration - secondsUntilMinuteEnd;
+                
+                if (startOffset >= 0 && startOffset < chimesDuration) {
+                    chimesAudio.currentTime = startOffset;
+                    chimesAudio.play().then(() => {
+                        chimesPlaying = true;
+                    }).catch(() => {});
+                }
             }
-            // Сбрасываем, когда уходим из зоны колокола
-            if (seconds < 48) {
-                lastBellSecond = -1;
+            
+            // Сбрасываем флаг в начале минуты
+            if (seconds < chimesStartSecond && chimesPlaying) {
+                chimesPlaying = false;
             }
 
             // Конфетти при начале новой минуты (секунды = 0)
@@ -494,20 +407,8 @@
             digitalClock.textContent = `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
         }
 
-        // Первый запуск без анимации
-        secondHand.style.transition = 'none';
-        minuteHand.style.transition = 'none';
-        hourHand.style.transition = 'none';
+        // Первый запуск
         updateClock();
-
-        // Включаем плавную анимацию после первого кадра
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                secondHand.style.transition = '';
-                minuteHand.style.transition = '';
-                hourHand.style.transition = '';
-            });
-        });
 
         // Используем requestAnimationFrame для максимальной плавности
         function tick() {
