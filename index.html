@@ -487,11 +487,69 @@
         }
         requestAnimationFrame(tick);
 
-        // Регистрация Service Worker для PWA
+        // Регистрация Service Worker для PWA с автоматическим обновлением
         if ('serviceWorker' in navigator) {
+            let refreshing = false;
+            
             navigator.serviceWorker.register('sw.js')
-                .then(() => console.log('Service Worker зарегистрирован'))
+                .then(registration => {
+                    console.log('Service Worker зарегистрирован');
+                    
+                    // Проверка обновлений каждые 60 секунд
+                    setInterval(() => {
+                        registration.update();
+                    }, 60000);
+                    
+                    // Обработка обновления service worker
+                    registration.addEventListener('updatefound', () => {
+                        const newWorker = registration.installing;
+                        if (newWorker) {
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // Новая версия установлена, перезагружаем страницу
+                                    console.log('Обнаружена новая версия, перезагрузка...');
+                                    if (!refreshing) {
+                                        refreshing = true;
+                                        window.location.reload();
+                                    }
+                                }
+                            });
+                        }
+                    });
+                })
                 .catch(err => console.log('Service Worker ошибка:', err));
+            
+            // Слушаем сообщения от service worker
+            navigator.serviceWorker.addEventListener('message', event => {
+                if (event.data && event.data.type === 'SW_UPDATED') {
+                    console.log('Service Worker обновлен до версии:', event.data.version);
+                    if (!refreshing) {
+                        refreshing = true;
+                        window.location.reload();
+                    }
+                } else if (event.data && event.data.type === 'CONTENT_UPDATED') {
+                    console.log('Обновлен файл:', event.data.url);
+                    // Можно показать уведомление пользователю или перезагрузить
+                    if (!refreshing && event.data.url.includes('index.html')) {
+                        refreshing = true;
+                        window.location.reload();
+                    }
+                }
+            });
+            
+            // Обработка случая, когда service worker уже контролирует страницу
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.addEventListener('statechange', () => {
+                    if (navigator.serviceWorker.controller.state === 'activated' && !refreshing) {
+                        // Проверяем, есть ли новая версия
+                        navigator.serviceWorker.getRegistration().then(registration => {
+                            if (registration) {
+                                registration.update();
+                            }
+                        });
+                    }
+                });
+            }
         }
     </script>
 </body>
