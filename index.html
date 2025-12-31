@@ -17,6 +17,11 @@
     
     <!-- Android PWA -->
     <meta name="mobile-web-app-capable" content="yes">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Montserrat:wght@400;500&family=Orbitron:wght@500&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -34,7 +39,7 @@
             justify-content: center;
             align-items: center;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
-            font-family: 'Georgia', serif;
+            font-family: 'Cormorant Garamond', Georgia, serif;
             /* Поддержка safe-area для iPhone с вырезом */
             padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
         }
@@ -81,12 +86,13 @@
 
         .digital-clock {
             margin-top: clamp(10px, 2vh, 30px);
-            font-family: 'Courier New', monospace;
-            font-size: clamp(1.2rem, 4vw, 2.5rem);
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 500;
+            font-size: clamp(1.4rem, 5vw, 2.8rem);
             color: #b8956c;
-            text-shadow: 0 0 20px rgba(184, 149, 108, 0.4);
-            letter-spacing: 0.15em;
-            background: linear-gradient(180deg, #b8956c 0%, #8b7355 100%);
+            text-shadow: 0 0 20px rgba(184, 149, 108, 0.5);
+            letter-spacing: 0.08em;
+            background: linear-gradient(180deg, #d4af6a 0%, #a08060 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -117,15 +123,20 @@
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
-            color: rgba(184, 149, 108, 0.8);
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 0.85rem;
+            background: rgba(0, 0, 0, 0.75);
+            color: rgba(212, 175, 106, 0.9);
+            padding: 12px 24px;
+            border-radius: 10px;
+            border: 1px solid rgba(184, 149, 108, 0.2);
+            font-family: 'Montserrat', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 500;
+            letter-spacing: 0.02em;
             opacity: 0;
             transition: opacity 0.3s;
             pointer-events: none;
             z-index: 100;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
         }
 
         .audio-blocked-hint.visible {
@@ -185,10 +196,17 @@
             
             // Проверяем, не загрузилась ли страница в момент, когда звук уже должен играть
             const now = new Date();
+            const hours = now.getHours();
+            const minutes = now.getMinutes();
             const seconds = now.getSeconds();
             const milliseconds = now.getMilliseconds();
             
-            if (seconds >= chimesStartSecond) {
+            // Куранты играют только перед 12:00 и 00:00
+            const isBeforeNoon = hours === 11 && minutes === 59;
+            const isBeforeMidnight = hours === 23 && minutes === 59;
+            const shouldPlayChimes = isBeforeNoon || isBeforeMidnight;
+            
+            if (shouldPlayChimes && seconds >= chimesStartSecond) {
                 // Рассчитываем, с какой позиции начать воспроизведение
                 const secondsUntilMinuteEnd = 60 - seconds - (milliseconds / 1000);
                 const startOffset = chimesDuration - secondsUntilMinuteEnd;
@@ -231,10 +249,17 @@
             const unlockPromise = chimesAudio.play();
             if (unlockPromise) {
                 unlockPromise.then(() => {
-                    // Если сейчас не время курантов - останавливаем
+                    // Проверяем, сейчас ли время курантов (перед 12:00 или 00:00)
                     const now = new Date();
+                    const hours = now.getHours();
+                    const minutes = now.getMinutes();
                     const seconds = now.getSeconds();
-                    if (seconds < chimesStartSecond || !chimesReady) {
+                    
+                    const isBeforeNoon = hours === 11 && minutes === 59;
+                    const isBeforeMidnight = hours === 23 && minutes === 59;
+                    const shouldPlayChimes = isBeforeNoon || isBeforeMidnight;
+                    
+                    if (!shouldPlayChimes || seconds < chimesStartSecond || !chimesReady) {
                         chimesAudio.pause();
                         chimesAudio.currentTime = 0;
                     } else {
@@ -386,8 +411,14 @@
             const seconds = now.getSeconds();
             const milliseconds = now.getMilliseconds();
 
-            // Запускаем куранты так, чтобы они закончились ровно к началу новой минуты
-            if (chimesReady && seconds >= chimesStartSecond && !chimesPlaying) {
+            // Проверяем, приближается ли 12:00 (полдень или полночь)
+            // Куранты играют только перед 12:00 и 00:00
+            const isBeforeNoon = hours === 11 && minutes === 59;
+            const isBeforeMidnight = hours === 23 && minutes === 59;
+            const shouldPlayChimes = isBeforeNoon || isBeforeMidnight;
+
+            // Запускаем куранты так, чтобы они закончились ровно к 12:00
+            if (chimesReady && shouldPlayChimes && seconds >= chimesStartSecond && !chimesPlaying) {
                 // Рассчитываем точное время старта для синхронизации
                 const secondsUntilMinuteEnd = 60 - seconds - (milliseconds / 1000);
                 const startOffset = chimesDuration - secondsUntilMinuteEnd;
@@ -403,14 +434,18 @@
                 }
             }
             
-            // Сбрасываем флаг в начале минуты
+            // Сбрасываем флаг когда не время курантов
+            if (!shouldPlayChimes && chimesPlaying) {
+                chimesPlaying = false;
+            }
             if (seconds < chimesStartSecond && chimesPlaying) {
                 chimesPlaying = false;
             }
 
-            // Конфетти при начале новой минуты (секунды = 0)
-            if (seconds === 0 && minutes !== lastCelebrateMinute) {
-                lastCelebrateMinute = minutes;
+            // Конфетти только в 12:00 и 00:00
+            const isTwelve = (hours === 12 || hours === 0) && minutes === 0;
+            if (seconds === 0 && isTwelve && hours !== lastCelebrateMinute) {
+                lastCelebrateMinute = hours;
                 celebrate();
             }
 
